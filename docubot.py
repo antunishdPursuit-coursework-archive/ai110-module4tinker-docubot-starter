@@ -12,6 +12,12 @@ import glob
 import string
 
 class DocuBot:
+    STOP_WORDS = {
+        "a", "an", "and", "any", "are", "by", "does", "do", "for", "from",
+        "how", "i", "in", "is", "it", "of", "on", "or", "the", "there",
+        "these", "this", "to", "what", "when", "where", "which", "with",
+    }
+
     def __init__(self, docs_folder="docs", llm_client=None):
         """
         docs_folder: directory containing project documentation files
@@ -55,6 +61,23 @@ class DocuBot:
         """
         return word.lower().strip(string.punctuation)
 
+    def get_keywords(self, text):
+        """
+        Return cleaned words that carry meaning for retrieval.
+        """
+        keywords = []
+
+        for word in text.split():
+            cleaned_word = self.clean_word(word)
+
+            # Skip empty tokens and common filler words so retrieval focuses on meaningful terms.
+            if cleaned_word == "" or cleaned_word in self.STOP_WORDS:
+                continue
+
+            keywords.append(cleaned_word)
+
+        return keywords
+
     def build_index(self, documents):
         """
         TODO (Phase 1):
@@ -73,14 +96,7 @@ class DocuBot:
         index = {}
 
         for filename, text in documents:
-            words = text.split()
-
-            for word in words:
-                cleaned_word = self.clean_word(word)
-
-                if cleaned_word == "":
-                    continue
-
+            for cleaned_word in self.get_keywords(text):
                 if cleaned_word not in index:
                     index[cleaned_word] = []
 
