@@ -120,17 +120,8 @@ class DocuBot:
         - Count how many appear in the text
         - Return the count as the score
         """
-        query_words = []
-        for word in query.split():
-            cleaned_word = self.clean_word(word)
-            if cleaned_word != "":
-                query_words.append(cleaned_word)
-
-        text_words = []
-        for word in text.split():
-            cleaned_word = self.clean_word(word)
-            if cleaned_word != "":
-                text_words.append(cleaned_word)
+        query_words = self.get_keywords(query)
+        text_words = self.get_keywords(text)
 
         score = 0
         for query_word in query_words:
