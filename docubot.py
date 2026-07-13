@@ -9,6 +9,7 @@ Core DocuBot class responsible for:
 
 import os
 import glob
+import string
 
 class DocuBot:
     def __init__(self, docs_folder="docs", llm_client=None):
@@ -48,6 +49,12 @@ class DocuBot:
     # Index Construction (Phase 1)
     # -----------------------------------------------------------
 
+    def clean_word(self, word):
+        """
+        Lowercase a word and remove surrounding punctuation.
+        """
+        return word.lower().strip(string.punctuation)
+
     def build_index(self, documents):
         """
         TODO (Phase 1):
@@ -64,7 +71,23 @@ class DocuBot:
         ignore punctuation if needed.
         """
         index = {}
-        # TODO: implement simple indexing
+
+        for filename, text in documents:
+            words = text.split()
+
+            for word in words:
+                cleaned_word = self.clean_word(word)
+
+                if cleaned_word == "":
+                    continue
+
+                if cleaned_word not in index:
+                    index[cleaned_word] = []
+
+                # A list is simple for this small lab; a larger system would use a set here.
+                if filename not in index[cleaned_word]:
+                    index[cleaned_word].append(filename)
+
         return index
 
     # -----------------------------------------------------------
@@ -81,8 +104,23 @@ class DocuBot:
         - Count how many appear in the text
         - Return the count as the score
         """
-        # TODO: implement scoring
-        return 0
+        query_words = []
+        for word in query.split():
+            cleaned_word = self.clean_word(word)
+            if cleaned_word != "":
+                query_words.append(cleaned_word)
+
+        text_words = []
+        for word in text.split():
+            cleaned_word = self.clean_word(word)
+            if cleaned_word != "":
+                text_words.append(cleaned_word)
+
+        score = 0
+        for query_word in query_words:
+            score += text_words.count(query_word)
+
+        return score
 
     def retrieve(self, query, top_k=3):
         """
@@ -92,8 +130,20 @@ class DocuBot:
         Return a list of (filename, text) sorted by score descending.
         """
         results = []
-        # TODO: implement retrieval logic
-        return results[:top_k]
+
+        for filename, text in self.documents:
+            score = self.score_document(query, text)
+
+            if score > 0:
+                results.append((score, filename, text))
+
+        results.sort(reverse=True)
+
+        snippets = []
+        for score, filename, text in results:
+            snippets.append((filename, text))
+
+        return snippets[:top_k]
 
     # -----------------------------------------------------------
     # Answering Modes
