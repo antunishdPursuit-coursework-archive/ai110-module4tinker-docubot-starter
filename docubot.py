@@ -9,13 +9,15 @@ Core DocuBot class responsible for:
 
 import os
 import glob
-import string
+import re
 
 class DocuBot:
     STOP_WORDS = {
         "a", "an", "and", "any", "are", "by", "does", "do", "for", "from",
         "how", "i", "in", "is", "it", "of", "on", "or", "the", "there",
         "these", "this", "to", "what", "when", "where", "which", "with",
+        "all", "can", "client", "could", "doc", "docs", "documentation",
+        "me", "mention", "my", "please", "some", "tell", "you",
     }
 
     def __init__(self, docs_folder="docs", llm_client=None):
@@ -31,6 +33,11 @@ class DocuBot:
 
         # Build a retrieval index (implemented in Phase 1)
         self.index = self.build_index(self.documents)
+        self.sections = [
+            (filename, section)
+            for filename, text in self.documents
+            for section in self.split_sections(text)
+        ]
 
     # -----------------------------------------------------------
     # Document Loading
@@ -55,32 +62,51 @@ class DocuBot:
     # Index Construction (Phase 1)
     # -----------------------------------------------------------
 
+    WORD_FORMS = {
+        "generated": "generate", "generation": "generate", "generating": "generate",
+        "connection": "connect", "connecting": "connect", "connected": "connect",
+    }
+
     def clean_word(self, word):
-        """
-        Lowercase a word and remove surrounding punctuation.
-        """
-        return word.lower().strip(string.punctuation)
+        """Normalize punctuation and simple plurals without semantic search."""
+        word = word.lower().strip(".,:;!?`\"'()[]{}")
+        if len(word) > 4 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
+        return self.WORD_FORMS.get(word, word)
 
     def get_keywords(self, text):
-        """
-        Return cleaned words that carry meaning for retrieval.
-        """
-        keywords = []
+        """Split identifiers/routes too, so AUTH_SECRET_KEY includes auth."""
+        words = [self.clean_word(word) for word in re.findall(r"[a-z0-9]+", text.lower())]
+        return [word for word in words if word and word not in self.STOP_WORDS]
 
-        for word in text.split():
-            cleaned_word = self.clean_word(word)
+    def split_sections(self, text):
+        """Keep Markdown sections with their parent headings for context."""
+        sections = []
+        headings = []
+        body = []
+        in_fence = False
 
-            # Skip empty tokens and common filler words so retrieval focuses on meaningful terms.
-            if cleaned_word == "" or cleaned_word in self.STOP_WORDS:
-                continue
+        def save_section():
+            if any(line.strip() for line in body):
+                sections.append("\n".join(headings + body).strip())
 
-            keywords.append(cleaned_word)
-
-        return keywords
+        for line in text.splitlines():
+            if line.lstrip().startswith("```"):
+                in_fence = not in_fence
+            heading = re.match(r"^(#{1,6})\s+", line) if not in_fence else None
+            if heading:
+                save_section()
+                level = len(heading.group(1))
+                headings = [h for h in headings if len(h.split()[0]) < level]
+                headings.append(line)
+                body = []
+            else:
+                body.append(line)
+        save_section()
+        return sections
 
     def build_index(self, documents):
         """
-        TODO (Phase 1):
         Build a tiny inverted index mapping lowercase words to the documents
         they appear in.
 
@@ -111,46 +137,38 @@ class DocuBot:
     # -----------------------------------------------------------
 
     def score_document(self, query, text):
-        """
-        TODO (Phase 1):
-        Return a simple relevance score for how well the text matches the query.
-
-        Suggested baseline:
-        - Convert query into lowercase words
-        - Count how many appear in the text
-        - Return the count as the score
-        """
-        query_words = self.get_keywords(query)
-        text_words = self.get_keywords(text)
-
-        score = 0
-        for query_word in query_words:
-            score += text_words.count(query_word)
-
-        return score
+        """Count distinct query keywords present; repetition adds no evidence."""
+        return len(set(self.get_keywords(query)) & set(self.get_keywords(text)))
 
     def retrieve(self, query, top_k=3):
-        """
-        TODO (Phase 1):
-        Use the index and scoring function to select top_k relevant document snippets.
+        """Rank focused sections and decline weak keyword overlap.
 
-        Return a list of (filename, text) sorted by score descending.
+        A section needs at least half the query's distinct keywords, plus two
+        matches unless the query has one keyword or names the source file.
+        This is a small lexical heuristic, not a confidence probability.
         """
+        query_words = set(self.get_keywords(query))
+        if not query_words or top_k <= 0:
+            return []
+
+        candidates = set()
+        for word in query_words:
+            candidates.update(self.index.get(word, []))
         results = []
+        for filename, section in self.sections:
+            file_words = set(self.get_keywords(os.path.splitext(filename)[0]))
+            if filename not in candidates and not (query_words & file_words):
+                continue
+            score = self.score_document(query, filename + "\n" + section)
+            coverage = score / len(query_words)
+            anchored = bool(query_words & file_words)
+            if coverage >= 0.5 and (score >= 2 or len(query_words) == 1 or anchored):
+                headings = "\n".join(line for line in section.splitlines() if line.startswith("#"))
+                heading_score = self.score_document(query, headings)
+                results.append((score, heading_score, filename, section))
 
-        for filename, text in self.documents:
-            score = self.score_document(query, text)
-
-            if score > 0:
-                results.append((score, filename, text))
-
-        results.sort(reverse=True)
-
-        snippets = []
-        for score, filename, text in results:
-            snippets.append((filename, text))
-
-        return snippets[:top_k]
+        results.sort(key=lambda result: (-result[0], -result[1], len(result[3]), result[2], result[3]))
+        return [(filename, section) for _, _, filename, section in results[:top_k]]
 
     # -----------------------------------------------------------
     # Answering Modes

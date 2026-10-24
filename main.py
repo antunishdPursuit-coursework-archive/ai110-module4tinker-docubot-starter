@@ -2,7 +2,7 @@
 CLI runner for the DocuBot tinker activity.
 
 Supports three modes:
-1. Naive LLM generation over all docs (Phase 0)
+1. Naive LLM generation without project docs (Phase 0)
 2. Retrieval only (Phase 1)
 3. RAG: retrieval plus LLM generation (Phase 2)
 """
@@ -37,9 +37,9 @@ def choose_mode(has_llm):
     """
     print("Choose a mode:")
     if has_llm:
-        print("  1) Naive LLM over full docs (no retrieval)")
+        print("  1) Naive LLM without project docs (no retrieval)")
     else:
-        print("  1) Naive LLM over full docs (unavailable, no GEMINI_API_KEY)")
+        print("  1) Naive LLM without project docs (unavailable, no GEMINI_API_KEY)")
     print("  2) Retrieval only (no LLM)")
     if has_llm:
         print("  3) RAG (retrieval + LLM)")
@@ -71,7 +71,7 @@ def get_query_or_use_samples():
 def run_naive_llm_mode(bot, has_llm):
     """
     Mode 1:
-    Naive LLM generation over the full docs corpus.
+    Naive LLM generation without project documentation.
     """
     if not has_llm or bot.llm_client is None:
         print("\nNaive LLM mode is not available (no GEMINI_API_KEY).\n")
