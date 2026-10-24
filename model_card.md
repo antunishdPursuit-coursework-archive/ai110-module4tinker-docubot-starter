@@ -1,120 +1,152 @@
 # DocuBot Model Card
 
-## 1. System Overview
+## 1. System overview
 
-**What is DocuBot trying to do?**  
-DocuBot is a small documentation assistant that answers developer questions using files in the `docs/` folder. The goal is to compare ungrounded generation with retrieval-based answers so the system can point users toward relevant documentation instead of guessing.
+DocuBot answers developer questions from the four Markdown files in `docs/`.
+Those files describe a fictional application; this repository does not require
+running that application's server or database. The input is a question and a
+local documentation folder. Outputs are raw source sections, a grounded Gemini
+answer, or an explicit refusal when evidence is missing.
 
-**What inputs does DocuBot take?**  
-DocuBot takes a user question and a folder of Markdown or text documentation files. If Gemini is configured, it can also use the `GEMINI_API_KEY` environment variable for LLM-based modes.
+The three modes deliberately separate retrieval from generation:
 
-**What outputs does DocuBot produce?**  
-In retrieval-only mode, DocuBot returns the filenames and text of the most relevant retrieved documents. In RAG mode, DocuBot should use retrieved snippets to generate a grounded answer.
+- **Naive generation:** the existing `naive_answer_over_full_docs()` helper
+  ignores its `all_text` argument and sends only the developer question.
+  It cannot know this project's private documentation.
+- **Retrieval only:** local index/ranking returns source sections and filenames;
+  no API request is made.
+- **RAG:** retrieval selects evidence, then Gemini receives those sections and
+  must answer only from them, cite files, or refuse. No retrieved evidence
+  means refusal before generation.
 
----
+## 2. Retrieval design and tradeoffs
 
-## 2. Retrieval Design
+`docubot.py` loads four files and builds an inverted index from normalized
+keywords to filenames. Tokens split punctuation, identifiers, and routes.
+Simple plurals and a small generate/connect word-form map reduce exact-word
+mismatches; common filler words are excluded.
 
-**How does your retrieval system work?**  
-The system loads each Markdown or text file from `docs/`, cleans words by lowercasing them and removing surrounding punctuation, then builds an inverted index that maps keywords to filenames. Common stop words such as `the`, `is`, `what`, and `in` are skipped so the index focuses on more meaningful terms.
+The 36 Markdown sections retain parent headings and fenced examples. Query
+keywords select candidate files through the index. A section's score is the
+number of distinct query keywords found in its filename plus text. Repeating a
+word does not increase that score. Ties use heading overlap, then shorter text,
+then deterministic filename/text ordering.
 
-For scoring, DocuBot cleans the query and document text using the same keyword helper. It counts how many times each query keyword appears in a document. `retrieve()` scores every document, keeps documents with scores above zero, sorts them from highest score to lowest score, and returns the top results.
+To qualify, a section must match at least half the distinct query keywords and
+at least two keywords, unless the query has one keyword or names the source
+file. `top_k` defaults to three. Empty/stop-word-only queries, nonpositive top-k,
+and no qualifying evidence return no snippets. Both answer modes then say:
 
-**What tradeoffs did you make?**  
-This retrieval design favors simplicity and readability over advanced search quality. It is easy to understand and works well for a small documentation folder, but it does not understand synonyms, word meaning, or exact route syntax very deeply. A larger system would likely use sets, chunking, embeddings, or a more advanced ranking method.
+> I do not know based on these docs.
 
----
+This is a readable lexical heuristic, not a calibrated confidence score or a
+semantic relevance guarantee. It reduces weak incidental matches, but can miss
+synonyms and can still return extra sections with shared terms.
 
-## 3. Use of the LLM (Gemini)
+## 3. Gemini behavior
 
-**When does DocuBot call the LLM and when does it not?**
+The configured model is `gemini-3.1-flash-lite`. An ignored local `.env` or shell
+variable supplies `GEMINI_API_KEY`; keys are not part of this repository.
+The RAG prompt requires source-only answers and file references. When snippets
+are insufficient, it requests this exact response:
 
-- Naive LLM mode: Sends the full documentation corpus to Gemini if `GEMINI_API_KEY` is configured.
-- Retrieval only mode: Does not call Gemini. It only returns matching documentation snippets.
-- RAG mode: Retrieves snippets first, then sends only those snippets to Gemini for a grounded answer if `GEMINI_API_KEY` is configured.
+> I do not know based on the docs I have.
 
-**What instructions do you give the LLM to keep it grounded?**  
-The RAG prompt in `llm_client.py` instructs the model to answer only from the retrieved snippets, say when the snippets do not contain enough information, and cite the file names used. I tested RAG mode with `gemini-3.1-flash-lite`, and it answered supported questions with file references while refusing the unsupported payment-processing question.
+A grounding instruction does not prove factual correctness. Returned claims
+must still be compared with the cited sections. Provider errors are reported
+as errors, not treated as answers or scored as successful generation.
 
----
+## 4. October 24, 2026 verification
 
-## 4. Experiments and Comparisons
-
-I ran the retrieval evaluation with:
+Environment: Python 3.13.17, project-local `.venv`, existing requirements
+`google-genai` 2.33.0 and `python-dotenv` 1.2.4. No dependencies were added to
+`requirements.txt`. Run from the repository root:
 
 ```powershell
-venv\Scripts\python.exe evaluation.py
+.\.venv\Scripts\python.exe -B evaluation.py
+.\.venv\Scripts\python.exe -B main.py
 ```
 
-The final retrieval hit rate was:
+The unchanged eight-query evaluation prints **0.88 (7/8)** before and after
+section retrieval. It measures whether any top-three filename matches an
+expected source, not answer accuracy or snippet precision. Its unsupported
+payment question has no expected file and always counts as a miss, including
+when refusal is correct. The unchanged overall number therefore hides this
+important improvement.
+
+| Identical question selected for comparison | Fresh retrieval-only observation | Fresh naive / RAG observation |
+| --- | --- | --- |
+| Where is the auth token generated? | First result is AUTH.md / Token Generation, 466 characters instead of the 2,305-character full file; contains generate_access_token, auth_utils.py, and AUTH_SECRET_KEY. | First naive API request failed with 401; no fresh successful naive or generated RAG answer. |
+| How do I connect to the database? | DATABASE.md / Connection Configuration is first and includes DATABASE_URL and the documented connection examples. | Not called after the credential failure. |
+| Which endpoint lists all users? | API_REFERENCE.md / GET /api/users is first; includes the admin-only restriction. | Not called after the credential failure. |
+| Is there any mention of payment processing in these docs? | No snippets; explicit refusal. The old whole-file retriever returned an irrelevant SETUP.md. | RAG refusal before any API request verified offline; naive comparison remains blocked. |
+| How can I prolong my session? | No snippets; the retriever does not connect this paraphrase to token refresh. | RAG also refuses before generation: a concrete retrieval-limited failure for a human-interpretable refresh question. Naive comparison remains blocked. |
+
+Temporary in-memory checks covered first-result source/content, shorter
+snippets, unsupported/empty/stop-word-only queries, zero/negative top-k,
+Markdown fences, and no LLM request on unsupported evidence. Python syntax and
+interactive mode-2 supported/refusal paths passed. Existing `evaluation.py`
+was kept unchanged. No test files were added or removed.
+
+### Live comparison blocker
+
+One naive request was attempted with the existing key. Gemini returned:
 
 ```text
-Hit rate: 0.88
+401 UNAUTHENTICATED
+ACCOUNT_STATE_INVALID
+The bound service account is deleted or disabled.
+The service account bound to the API key must be active.
 ```
 
-| Query | Naive LLM: helpful or harmful? | Retrieval only: helpful or harmful? | RAG: helpful or harmful? | Notes |
-|------|---------------------------------|--------------------------------------|---------------------------|-------|
-| Where is the auth token generated? | Not evaluated yet | Helpful | Helpful | RAG answered that `generate_access_token` in `auth_utils.py` creates the token and cited `AUTH.md`. |
-| How do I connect to the database? | Not evaluated yet | Helpful | Helpful | RAG explained `DATABASE_URL`, SQLite default behavior, PostgreSQL format, and referenced `DATABASE.md` and `SETUP.md`. |
-| Which endpoint lists all users? | Not evaluated yet | Helpful | Helpful | RAG answered `GET /api/users` and cited `API_REFERENCE.md`. |
-| How does a client refresh an access token? | Not evaluated yet | Helpful | Helpful | RAG explained using `/api/refresh` with the Authorization header and cited `AUTH.md` and `API_REFERENCE.md`. |
-| Is there any mention of payment processing in these docs? | Not evaluated yet | Harmful | Helpful | Retrieval-only returned a weak match, but RAG correctly answered: `I do not know based on the docs I have.` |
+The experiment stopped immediately; no repeated requests or model switching
+were attempted. This is an authentication failure, not an observed
+hallucination or a model-quality result. Part 1's fresh naive observation and
+Part 4's full same-question three-mode comparison are incomplete until an
+active key allows those modes to run. Three-mode evaluation is not complete.
 
-**What patterns did you notice?**  
-Retrieval-only mode improved once stop words were removed from scoring. It usually finds the right document, but it may still return extra documents because the scoring method only counts keyword overlap. RAG mode produced more readable answers and handled the unsupported payment-processing question better because the prompt told the model to refuse when the snippets did not contain enough evidence.
+### Historical observations, separate from this run
 
----
+The earlier model card reported RAG answers naming `generate_access_token`
+in `auth_utils.py`, DATABASE_URL/SQLite/PostgreSQL setup, GET /api/users, and
+/api/refresh, plus refusal on payment processing. Those are prior recorded
+observations, not fresh successful API results on October 24. Its naive-mode
+column was not evaluated. Earlier model-configuration notes:
 
-## 5. Failure Cases and Guardrails
+The LLM-based modes needed a few model attempts before they worked. `gemini-2.5-flash` and `gemma-3-27b-it` did not work correctly during testing, so I first focused on retrieval-only behavior because it does not depend on the model API. After switching to `gemini-3.1-flash-lite`, the RAG mode worked and could answer supported questions with file references while refusing unsupported questions.
 
-**Describe at least two concrete failure cases you observed.**
+## 5. Failure cases and guardrails
 
-Failure case 1:
+1. **Weak incidental match (baseline, corrected):** the payment-processing
+   question previously returned all of SETUP.md at score 1. It now has no
+   qualifying section and refuses in retrieval and RAG before an API call.
+2. **Overly broad output (baseline, reduced):** the auth question returned
+   full AUTH.md/API_REFERENCE.md text. The relevant token-generation section
+   is now first; up to three sections can still contain less useful context.
+3. **False refusal (current limitation):** `How can I prolong my session?`
+   retrieves nothing, even though a person could direct the user to token
+   refresh. RAG cannot recover evidence that retrieval never supplies.
+4. **Provider availability (current blocker):** the saved key cannot
+   authenticate. Mode 2 still works offline; this does not make modes 1/3
+   verified or justify substituting remembered results.
 
-- Question: `Is there any mention of payment processing in these docs?`
-- What happened: The system returned `SETUP.md`.
-- What should have happened: DocuBot should have said it does not know based on the docs because payment processing is not covered.
+The retrieval threshold and the RAG evidence/refusal prompt are complementary
+guardrails. Neither is an authorization control or protection against all
+prompt injection. Only the selected docs are sent in RAG mode; do not place
+secrets or unapproved private material in the corpus.
 
-Failure case 2:
+## 6. Interpretation and responsible use
 
-- Question: `Which endpoint lists all users?`
-- What happened: The system retrieved the correct `API_REFERENCE.md`, but it also returned unrelated files.
-- What should have happened: The API reference should have been ranked clearly above unrelated documents, and weaker matches should have been filtered out.
+The intended comparison is fluency versus grounding: naive generation can
+sound helpful without project evidence; raw retrieval is inspectable but less
+readable; RAG can summarize evidence clearly, while still inheriting retrieval
+errors. These are design expectations. The current API failure prevents fresh
+claims about which naive answer was fluent/wrong or which generated RAG answer
+was clearer in this run.
 
-**When should DocuBot say "I do not know based on the docs I have"?**  
-DocuBot should refuse when the user asks about a topic that does not appear in the docs, such as payment processing. It should also refuse when all retrieved documents have very weak scores or only match broad generic terms.
-
-**What guardrails did you implement?**  
-The current retrieval guardrail is stop-word filtering, which reduces weak matches from common filler words. The RAG prompt also asks the model to say it does not know when the retrieved snippets do not contain enough information. A stronger future retrieval guardrail would add a minimum score threshold before returning snippets.
-
----
-
-## 6. Limitations and Future Improvements
-
-**Current limitations**
-
-1. The retriever uses keyword counting, so it does not understand synonyms or meaning.
-2. Unsupported questions can still return weak matches instead of a refusal.
-3. The system returns full document text instead of smaller, more precise snippets.
-
-**Future improvements**
-
-1. Add a minimum score threshold so DocuBot can return "I do not know based on these docs" for weak matches.
-2. Split documents into smaller sections so answers can point to more precise snippets.
-3. Add automated checks for unsupported questions so retrieval-only mode can refuse weak matches before calling the LLM.
-
----
-
-## 7. Responsible Use
-
-**Where could this system cause real world harm if used carelessly?**  
-DocuBot could cause harm if developers trust weak or incorrect retrieved results without checking the underlying docs. If used for security, authentication, database setup, or API behavior, a wrong answer could lead to broken integrations or unsafe implementation choices.
-
-**What instructions would you give real developers who want to use DocuBot safely?**
-
-- Treat DocuBot as a documentation navigation aid, not as the final source of truth.
-- Always check the cited file before making production changes.
-- Do not rely on answers when DocuBot returns weak or unrelated snippets.
-- Add refusal thresholds before using this pattern in a real developer tool.
-
----
+Use DocuBot as a documentation navigation aid. Check cited files before
+changing authentication, database configuration, or API behavior. Stop when
+there is no evidence, distinguish provider failure from refusal, and never
+interpret the 0.88 filename hit rate as 88% correct answers. Future work could
+improve synonym coverage, assess sentence-level support and precision, and
+challenge shared-word false positives. None of that is claimed implemented.

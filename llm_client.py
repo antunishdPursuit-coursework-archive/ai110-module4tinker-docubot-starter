@@ -3,7 +3,7 @@ Gemini client wrapper used by DocuBot.
 
 Handles:
 - Configuring the Gemini client from the GEMINI_API_KEY environment variable
-- Naive "generation only" answers over the full docs corpus (Phase 0)
+- Naive "generation only" answers without project docs (Phase 0)
 - RAG style answers that use only retrieved snippets (Phase 2)
 
 Experiment with:
@@ -42,7 +42,7 @@ class GeminiClient:
         self.client = genai.Client(api_key=api_key)
 
     # -----------------------------------------------------------
-    # Phase 0: naive generation over full docs
+    # Phase 0: naive generation without project docs
     # -----------------------------------------------------------
 
     def naive_answer_over_full_docs(self, query, all_text):
