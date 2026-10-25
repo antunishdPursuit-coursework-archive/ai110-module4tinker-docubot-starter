@@ -103,3 +103,17 @@ The first returns focused authentication evidence; the second refuses.
 The optional existing `evaluation.py` measures expected-file hits, not answer
 accuracy. Its unsupported query has no expected file and always counts as a
 miss, even when refusal is correct.
+
+## Three-mode comparison (Parts 1 and 4)
+
+The October 24, 2026 run used identical questions in all three modes with
+`gemini-3.1-flash-lite`. See [the model card](model_card.md) for the five-query
+matrix, actual RAG excerpts, the naive `/users` versus documented `/api/users`
+difference, the missed session paraphrase, and the omitted admin-only qualifier.
+The earlier key failure was resolved before recording these live results.
+
+To repeat, run `python main.py`, choose 1, 2, then 3, and enter the same question
+each time. Include a supported question and the unsupported payment question.
+Retrieval is local; modes 1 and 3 need an active Gemini key. No-evidence RAG
+questions refuse before making an API request. Verify answers against source
+sections rather than assuming that a fluent answer or file citation is enough.
