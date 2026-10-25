@@ -84,11 +84,16 @@ You will primarily work in:
 ## Focused retrieval and refusal (Part 3)
 
 `docubot.py` indexes the original files and splits Markdown into sections,
-keeping parent headings and fenced examples together. Query keywords narrow the candidate files. An explicit `AUTH.md` or `.txt`
+retaining parent headings and fenced examples. Backtick and tilde fences
+retain their marker and opening length, so shorter or different markers
+inside code cannot turn code text into section headings. Only the leading
+heading path contributes the heading ranking bonus.
+
+Query keywords narrow the candidate files. An explicit `AUTH.md` or `.txt`
 reference restricts the sources; the filename and extension are removed from
 the question before scoring. Only section text provides evidence. Tokens split
 routes/identifiers, normalize simple plurals, and map a few generate/connect
-word forms. Sections rank by distinct keyword matches, then heading
+word forms. Sections rank by distinct keyword matches, then leading heading
 matches and shorter sections. Repeating a word does not increase the score.
 
 A section must cover at least half the content query keywords and match at

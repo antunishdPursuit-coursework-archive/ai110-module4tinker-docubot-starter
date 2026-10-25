@@ -26,13 +26,16 @@ keywords to filenames. Tokens split punctuation, identifiers, and routes.
 Simple plurals and a small generate/connect word-form map reduce exact-word
 mismatches; common filler words are excluded.
 
-The 36 Markdown sections retain parent headings and fenced examples.
+The supplied corpus produces 36 sections. Backtick and tilde fences retain
+parent headings, their opening marker, and length; only a matching,
+sufficiently long closing marker with no info text closes the example.
+Code text cannot change the parent heading path or contribute a heading bonus.
 
 Query keywords select candidate files through the index. Explicit `.md`/`.txt`
 references restrict those files and are removed from the content question.
 A section's score counts distinct content-question keywords found in its text;
 filenames and extensions provide no evidence. Repetition adds no score. Ties
-use heading overlap, then shorter text and deterministic
+use overlap in the leading heading path, then shorter text and deterministic
 filename/text ordering.
 
 To qualify, a section must match at least half the content query keywords and

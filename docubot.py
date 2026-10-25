@@ -79,21 +79,40 @@ class DocuBot:
         words = [self.clean_word(word) for word in re.findall(r"[a-z0-9]+", text.lower())]
         return [word for word in words if word and word not in self.STOP_WORDS]
 
+    def opening_fence(self, line):
+        """Recognize backtick/tilde fences with up to three leading spaces."""
+        match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if not match or (match[1][0] == "`" and "`" in match[2]):
+            return None
+        return match[1][0], len(match[1])
+
+    def closes_fence(self, line, fence):
+        """A closer has the same marker, sufficient length, and no info text."""
+        marker, length = fence
+        return re.fullmatch(r" {0,3}" + re.escape(marker) + "{" + str(length) + r",}[ \t]*", line) is not None
+
     def split_sections(self, text):
-        """Keep Markdown sections with their parent headings for context."""
+        """Keep Markdown sections with their parent headings and code fences."""
         sections = []
         headings = []
         body = []
-        in_fence = False
+        fence = None
 
         def save_section():
             if any(line.strip() for line in body):
                 sections.append("\n".join(headings + body).strip())
 
         for line in text.splitlines():
-            if line.lstrip().startswith("```"):
-                in_fence = not in_fence
-            heading = re.match(r"^(#{1,6})\s+", line) if not in_fence else None
+            if fence is not None:
+                body.append(line)
+                if self.closes_fence(line, fence):
+                    fence = None
+                continue
+            fence = self.opening_fence(line)
+            if fence is not None:
+                body.append(line)
+                continue
+            heading = re.match(r"^(#{1,6})\s+", line)
             if heading:
                 save_section()
                 level = len(heading.group(1))
@@ -165,8 +184,13 @@ class DocuBot:
             score = self.score_document(content_query, section)
             coverage = score / len(query_words)
             if coverage >= 0.5 and score >= min(2, len(query_words)):
-                headings = "\n".join(line for line in section.splitlines() if line.startswith("#"))
-                heading_score = self.score_document(content_query, headings)
+                # Only the leading heading path counts, never headings inside code.
+                heading_lines = []
+                for line in section.splitlines():
+                    if not re.match(r"^#{1,6}\s+", line):
+                        break
+                    heading_lines.append(line)
+                heading_score = self.score_document(content_query, "\n".join(heading_lines))
                 results.append((score, heading_score, filename, section))
 
         results.sort(key=lambda result: (-result[0], -result[1], len(result[3]), result[2], result[3]))
