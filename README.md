@@ -84,10 +84,11 @@ You will primarily work in:
 ## Focused retrieval and refusal (Part 3)
 
 `docubot.py` indexes the original files and splits Markdown into sections,
-retaining parent headings and fenced examples. Backtick and tilde fences
-retain their marker and opening length, so shorter or different markers
-inside code cannot turn code text into section headings. Only the leading
-heading path contributes the heading ranking bonus.
+retaining the parent heading path. Oversized sections use paragraphs and
+word/newline boundaries, targeting at most 1,000 characters including headings.
+Individual fenced code blocks remain intact even if they exceed that target.
+Backtick and tilde fences retain their marker and opening length, so shorter
+or different markers inside code cannot turn code text into section headings.
 
 Query keywords narrow the candidate files. An explicit `AUTH.md` or `.txt`
 reference restricts the sources; the filename and extension are removed from

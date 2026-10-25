@@ -79,6 +79,63 @@ class DocuBot:
         words = [self.clean_word(word) for word in re.findall(r"[a-z0-9]+", text.lower())]
         return [word for word in words if word and word not in self.STOP_WORDS]
 
+    MAX_SECTION_CHARS = 1000
+
+    def chunk_section(self, headings, body):
+        """Bound ordinary text; keep individual fenced code blocks intact."""
+        section = "\n".join(headings + body).strip()
+        if len(section) <= self.MAX_SECTION_CHARS:
+            return [section] if section else []
+
+        prefix = "\n".join(headings)
+        prefix = prefix + "\n\n" if prefix else ""
+        budget = max(1, self.MAX_SECTION_CHARS - len(prefix))
+        blocks = []
+        lines = []
+        fence = None
+        for line in body:
+            if fence is not None:
+                lines.append(line)
+                if self.closes_fence(line, fence):
+                    blocks.append((True, "\n".join(lines)))
+                    lines = []
+                    fence = None
+                continue
+            opening = self.opening_fence(line)
+            if opening is not None or not line.strip():
+                if lines:
+                    blocks.append((False, "\n".join(lines)))
+                    lines = []
+                fence = opening
+                if opening is not None:
+                    lines.append(line)
+            else:
+                lines.append(line)
+        if lines:
+            blocks.append((fence is not None, "\n".join(lines)))
+
+        chunks = []
+        current = ""
+        for protected, block in blocks:
+            pieces = []
+            while not protected and len(block) > budget:
+                boundary = max(block.rfind("\n", 0, budget + 1), block.rfind(" ", 0, budget + 1))
+                cut = boundary if boundary > 0 else budget
+                pieces.append(block[:cut])
+                block = block[cut:].lstrip()
+            if block:
+                pieces.append(block)
+            for piece in pieces:
+                combined = current + "\n\n" + piece if current else piece
+                if current and len(combined) > budget:
+                    chunks.append(prefix + current)
+                    current = piece
+                else:
+                    current = combined
+        if current:
+            chunks.append(prefix + current)
+        return chunks
+
     def opening_fence(self, line):
         """Recognize backtick/tilde fences with up to three leading spaces."""
         match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
@@ -100,7 +157,7 @@ class DocuBot:
 
         def save_section():
             if any(line.strip() for line in body):
-                sections.append("\n".join(headings + body).strip())
+                sections.extend(self.chunk_section(headings, body))
 
         for line in text.splitlines():
             if fence is not None:
