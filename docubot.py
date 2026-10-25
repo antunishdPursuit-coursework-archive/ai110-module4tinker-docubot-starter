@@ -143,11 +143,15 @@ class DocuBot:
     def retrieve(self, query, top_k=3):
         """Rank focused sections and decline weak keyword overlap.
 
-        A section needs at least half the query's distinct keywords, plus two
-        matches unless the query has one keyword or names the source file.
+        Filenames constrain sources but never count as answer evidence.
+        A section needs at least half the content query's distinct keywords,
+        plus two matches unless the content query has only one keyword.
         This is a small lexical heuristic, not a confidence probability.
         """
-        query_words = set(self.get_keywords(query))
+        file_pattern = r"\b[\w.-]+\.(?:md|txt)\b"
+        named_files = {name.lower() for name in re.findall(file_pattern, query, re.IGNORECASE)}
+        content_query = re.sub(file_pattern, " ", query, flags=re.IGNORECASE)
+        query_words = set(self.get_keywords(content_query))
         if not query_words or top_k <= 0:
             return []
 
@@ -156,15 +160,13 @@ class DocuBot:
             candidates.update(self.index.get(word, []))
         results = []
         for filename, section in self.sections:
-            file_words = set(self.get_keywords(os.path.splitext(filename)[0]))
-            if filename not in candidates and not (query_words & file_words):
+            if filename not in candidates or (named_files and filename.lower() not in named_files):
                 continue
-            score = self.score_document(query, filename + "\n" + section)
+            score = self.score_document(content_query, section)
             coverage = score / len(query_words)
-            anchored = bool(query_words & file_words)
-            if coverage >= 0.5 and (score >= 2 or len(query_words) == 1 or anchored):
+            if coverage >= 0.5 and score >= min(2, len(query_words)):
                 headings = "\n".join(line for line in section.splitlines() if line.startswith("#"))
-                heading_score = self.score_document(query, headings)
+                heading_score = self.score_document(content_query, headings)
                 results.append((score, heading_score, filename, section))
 
         results.sort(key=lambda result: (-result[0], -result[1], len(result[3]), result[2], result[3]))

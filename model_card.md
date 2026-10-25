@@ -26,16 +26,20 @@ keywords to filenames. Tokens split punctuation, identifiers, and routes.
 Simple plurals and a small generate/connect word-form map reduce exact-word
 mismatches; common filler words are excluded.
 
-The 36 Markdown sections retain parent headings and fenced examples. Query
-keywords select candidate files through the index. A section's score is the
-number of distinct query keywords found in its filename plus text. Repeating a
-word does not increase that score. Ties use heading overlap, then shorter text,
-then deterministic filename/text ordering.
+The 36 Markdown sections retain parent headings and fenced examples.
 
-To qualify, a section must match at least half the distinct query keywords and
-at least two keywords, unless the query has one keyword or names the source
-file. `top_k` defaults to three. Empty/stop-word-only queries, nonpositive top-k,
-and no qualifying evidence return no snippets. Both answer modes then say:
+Query keywords select candidate files through the index. Explicit `.md`/`.txt`
+references restrict those files and are removed from the content question.
+A section's score counts distinct content-question keywords found in its text;
+filenames and extensions provide no evidence. Repetition adds no score. Ties
+use heading overlap, then shorter text and deterministic
+filename/text ordering.
+
+To qualify, a section must match at least half the content query keywords and
+at least two keywords, unless the content query contains only one keyword.
+`top_k` defaults to three. Empty/stop-word-only content queries, nonpositive
+top-k, unknown named sources, and no qualifying evidence return no snippets.
+Both answer modes then say:
 
 > I do not know based on these docs.
 
@@ -74,9 +78,9 @@ payment question has no expected file and always counts as a miss, including
 when refusal is correct. The unchanged overall number therefore hides this
 important improvement.
 
-### Same-question comparison with the active key
+### Recorded same-question comparison before the retrieval refinements
 
-All five questions below ran through the existing naive, retrieval-only, and
+Before the retrieval refinements below, all five questions ran through naive, retrieval-only, and
 RAG methods with `gemini-3.1-flash-lite`. Only the key changed between the
 failed and successful runs. The comparison runner loaded the current local
 `.env` explicitly, allowed a 30-second timeout and one attempt per request,

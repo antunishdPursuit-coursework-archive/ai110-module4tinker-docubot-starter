@@ -84,13 +84,17 @@ You will primarily work in:
 ## Focused retrieval and refusal (Part 3)
 
 `docubot.py` indexes the original files and splits Markdown into sections,
-keeping parent headings and fenced examples together. Query/file keywords
-narrow the candidate files. Tokens split routes/identifiers, normalize simple
-plurals, and map a few generate/connect word forms. Sections rank by distinct keyword matches, with
-heading matches and then shorter sections breaking ties; repeated words no longer inflate the score.
+keeping parent headings and fenced examples together. Query keywords narrow the candidate files. An explicit `AUTH.md` or `.txt`
+reference restricts the sources; the filename and extension are removed from
+the question before scoring. Only section text provides evidence. Tokens split
+routes/identifiers, normalize simple plurals, and map a few generate/connect
+word forms. Sections rank by distinct keyword matches, then heading
+matches and shorter sections. Repeating a word does not increase the score.
 
-A section must cover at least half the query keywords and match at least two,
-unless there is only one query keyword or the query names the source file.
+A section must cover at least half the content query keywords and match at
+least two, unless the content question contains only one keyword. Naming a
+file does not waive that condition: `AUTH.md payments` refuses, while
+`Where is the auth token generated in AUTH.md?` retrieves the auth evidence.
 No qualifying section means `I do not know based on these docs.` in retrieval
 and RAG modes, before an LLM request. This threshold is a heuristic, not a
 probability: synonyms can cause false refusals and shared words can still
